@@ -1,5 +1,4 @@
-
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   Calendar,
@@ -9,65 +8,105 @@ import {
   Building2,
   ExternalLink,
   Briefcase,
+  CheckCircle,
+  Clock3,
+  XCircle,
 } from "lucide-react";
 
 const API_URL = "http://localhost:5000/api";
 
+function getToken() {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("accessToken") ||
+    ""
+  );
+}
+
 function PlacementDrives() {
   const [drives, setDrives] = useState([]);
+  const [applications, setApplications] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadApplications = useCallback(async () => {
+    const token = getToken();
 
-    async function loadDrives() {
-      setLoading(true);
-      setError("");
-
-      try {
-        const response = await fetch(`${API_URL}/drives`);
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-          throw new Error(data.message || "Unable to load placement drives.");
-        }
-
-        const activeDrives = (data.drives || [])
-          .filter(
-            (drive) =>
-              drive.status === "Upcoming" || drive.status === "Open"
-          )
-          .map((drive) => ({
-            ...drive,
-            id: Number(drive.id),
-            company_id: Number(drive.company_id),
-            company: drive.company || "",
-            date: String(drive.date || drive.drive_date || "").slice(0, 10),
-            deadline: drive.deadline
-              ? String(drive.deadline).slice(0, 10)
-              : "",
-          }));
-
-        if (!cancelled) {
-          setDrives(activeDrives);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err.message || "Unable to load placement drives.");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    if (!token) {
+      setApplications([]);
+      return;
     }
 
-    loadDrives();
+    try {
+      const response = await fetch(`${API_URL}/student/applications`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-    return () => {
-      cancelled = true;
-    };
+      if (!response.ok) {
+        console.error("Unable to fetch application statuses.");
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data.success && Array.isArray(data.applications)) {
+        setApplications(data.applications);
+      }
+    } catch (err) {
+      console.error("Error loading application statuses:", err);
+    }
   }, []);
+
+  const loadDrives = useCallback(async () => {
+    setError("");
+
+    try {
+      const response = await fetch(`${API_URL}/drives`);
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Unable to load placement drives.");
+      }
+
+      const activeDrives = (data.drives || [])
+        .filter(
+          (drive) =>
+            drive.status === "Upcoming" || drive.status === "Open"
+        )
+        .map((drive) => ({
+          ...drive,
+          id: Number(drive.id),
+          company_id: Number(drive.company_id),
+          company: drive.company || "",
+          date: String(drive.date || drive.drive_date || "").slice(0, 10),
+          deadline: drive.deadline
+            ? String(drive.deadline).slice(0, 10)
+            : "",
+        }));
+
+      setDrives(activeDrives);
+    } catch (err) {
+      setError(err.message || "Unable to load placement drives.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDrives();
+    loadApplications();
+
+    // Refresh application statuses to reflect officer decisions.
+    const interval = window.setInterval(() => {
+      loadApplications();
+    }, 15000);
+
+    return () => window.clearInterval(interval);
+  }, [loadDrives, loadApplications]);
 
   const filteredDrives = drives.filter((drive) => {
     const searchText = search.toLowerCase();
@@ -80,10 +119,62 @@ function PlacementDrives() {
     );
   });
 
-  const getStatusStyle = (status) =>
-    status === "Open"
+  function getApplication(driveId) {
+    return applications.find(
+      (application) =>
+        Number(application.drive_id) === Number(driveId)
+    );
+  }
+
+  function getApplicationStatusStyle(status) {
+    switch ((status || "").toLowerCase()) {
+      case "applied":
+        return { background: "#dbeafe", color: "#1d4ed8" };
+
+      case "under review":
+        return { background: "#fef3c7", color: "#92400e" };
+
+      case "shortlisted":
+        return { background: "#ede9fe", color: "#6d28d9" };
+
+      case "selected":
+        return { background: "#dcfce7", color: "#15803d" };
+
+      case "rejected":
+        return { background: "#fee2e2", color: "#b91c1c" };
+
+      default:
+        return { background: "#f1f5f9", color: "#475569" };
+    }
+  }
+
+  function getDriveStatusStyle(status) {
+    return status === "Open"
       ? { background: "#dcfce7", color: "#15803d" }
       : { background: "#dbeafe", color: "#1d4ed8" };
+  }
+
+  function ApplicationStatus({ status }) {
+    let icon = <Clock3 size={14} />;
+
+    if (status === "Selected" || status === "Shortlisted") {
+      icon = <CheckCircle size={14} />;
+    } else if (status === "Rejected") {
+      icon = <XCircle size={14} />;
+    }
+
+    return (
+      <span
+        style={{
+          ...styles.applicationBadge,
+          ...getApplicationStatusStyle(status),
+        }}
+      >
+        {icon}
+        {status}
+      </span>
+    );
+  }
 
   return (
     <div style={styles.page}>
@@ -111,6 +202,7 @@ function PlacementDrives() {
         <div style={styles.searchSection}>
           <div style={styles.searchBox}>
             <Search size={20} color="#64748b" />
+
             <input
               type="text"
               placeholder="Search by company, drive, eligibility or venue..."
@@ -136,8 +228,13 @@ function PlacementDrives() {
           <div style={styles.errorBox}>
             <h2>Unable to Load Placement Drives</h2>
             <p>{error}</p>
+
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                setLoading(true);
+                loadDrives();
+                loadApplications();
+              }}
               style={styles.clearButton}
             >
               Retry
@@ -150,7 +247,9 @@ function PlacementDrives() {
             </div>
 
             <h2>
-              {search ? "No Placement Drives Found" : "No Active Placement Drives"}
+              {search
+                ? "No Placement Drives Found"
+                : "No Active Placement Drives"}
             </h2>
 
             <p>
@@ -170,83 +269,111 @@ function PlacementDrives() {
           </div>
         ) : (
           <div style={styles.driveGrid}>
-            {filteredDrives.map((drive) => (
-              <article key={drive.id} style={styles.driveCard}>
-                <div style={styles.cardHeader}>
-                  <div style={styles.companySection}>
-                    <div style={styles.companyIcon}>
-                      <Building2 size={24} />
+            {filteredDrives.map((drive) => {
+              const application = getApplication(drive.id);
+              const applicationStatus = application?.status;
+
+              return (
+                <article key={drive.id} style={styles.driveCard}>
+                  <div style={styles.cardHeader}>
+                    <div style={styles.companySection}>
+                      <div style={styles.companyIcon}>
+                        <Building2 size={24} />
+                      </div>
+
+                      <div>
+                        <h2 style={styles.companyName}>
+                          {drive.company}
+                        </h2>
+
+                        <p style={styles.driveTitle}>
+                          {drive.title}
+                        </p>
+                      </div>
                     </div>
 
-                    <div>
-                      <h2 style={styles.companyName}>{drive.company}</h2>
-                      <p style={styles.driveTitle}>{drive.title}</p>
-                    </div>
+                    <span
+                      style={{
+                        ...styles.statusBadge,
+                        ...getDriveStatusStyle(drive.status),
+                      }}
+                    >
+                      {drive.status}
+                    </span>
                   </div>
 
-                  <span
-                    style={{
-                      ...styles.statusBadge,
-                      ...getStatusStyle(drive.status),
-                    }}
-                  >
-                    {drive.status}
-                  </span>
-                </div>
+                  <div style={styles.infoGrid}>
+                    <InfoItem
+                      icon={<Calendar size={18} color="#2563eb" />}
+                      label="Drive Date"
+                      value={drive.date || "Not specified"}
+                    />
 
-                <div style={styles.infoGrid}>
-                  <InfoItem
-                    icon={<Calendar size={18} color="#2563eb" />}
-                    label="Drive Date"
-                    value={drive.date || "Not specified"}
-                  />
+                    <InfoItem
+                      icon={<Clock size={18} color="#2563eb" />}
+                      label="Application Deadline"
+                      value={drive.deadline || "Not specified"}
+                    />
 
-                  <InfoItem
-                    icon={<Clock size={18} color="#2563eb" />}
-                    label="Application Deadline"
-                    value={drive.deadline || "Not specified"}
-                  />
+                    <InfoItem
+                      icon={<MapPin size={18} color="#2563eb" />}
+                      label="Venue"
+                      value={drive.venue || "Not specified"}
+                    />
 
-                  <InfoItem
-                    icon={<MapPin size={18} color="#2563eb" />}
-                    label="Venue"
-                    value={drive.venue || "Not specified"}
-                  />
+                    <InfoItem
+                      icon={<Briefcase size={18} color="#2563eb" />}
+                      label="Mode"
+                      value={drive.mode || "Not specified"}
+                    />
+                  </div>
 
-                  <InfoItem
-                    icon={<Briefcase size={18} color="#2563eb" />}
-                    label="Mode"
-                    value={drive.mode || "Not specified"}
-                  />
-                </div>
+                  <div style={styles.eligibilitySection}>
+                    <h3 style={styles.sectionHeading}>Eligibility</h3>
 
-                <div style={styles.eligibilitySection}>
-                  <h3 style={styles.sectionHeading}>Eligibility</h3>
-                  <p style={styles.eligibilityText}>
-                    {drive.eligibility || "Eligibility criteria not specified."}
-                  </p>
-                </div>
+                    <p style={styles.eligibilityText}>
+                      {drive.eligibility ||
+                        "Eligibility criteria not specified."}
+                    </p>
+                  </div>
 
-                <div style={styles.actions}>
-                  <Link
-                    to={`/student/companies/${encodeURIComponent(drive.company)}`}
-                    style={styles.companyButton}
-                  >
-                    <ExternalLink size={17} />
-                    View Company
-                  </Link>
+                  <div style={styles.actions}>
+                    <Link
+                      to={`/student/companies/${encodeURIComponent(
+                        drive.company
+                      )}`}
+                      style={styles.companyButton}
+                    >
+                      <ExternalLink size={17} />
+                      View Company
+                    </Link>
 
-                  <Link
-                    to={`/student/apply/${encodeURIComponent(drive.company)}`}
-                    state={{ driveId: drive.id }}
-                    style={styles.applyButton}
-                  >
-                    Apply Now
-                    <span aria-hidden="true">→</span>
-                  </Link>
-                </div>
-              </article>
-            ))}
+                    {application ? (
+                      <div style={styles.applicationStatusContainer}>
+                        <span style={styles.applicationStatusLabel}>
+                          Application Status
+                        </span>
+
+                        <ApplicationStatus
+                          status={applicationStatus || "Applied"}
+                        />
+                      </div>
+                    ) : (
+                      <Link
+                        to={`/student/apply/${encodeURIComponent(
+                          drive.company
+                        )}`}
+                        state={{ driveId: drive.id }}
+                        style={styles.applyButton}
+                      >
+                        Apply Now
+                        <span aria-hidden="true">→</span>
+                      </Link>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </main>
@@ -258,6 +385,7 @@ function InfoItem({ icon, label, value }) {
   return (
     <div style={styles.infoItem}>
       {icon}
+
       <div>
         <span style={styles.infoLabel}>{label}</span>
         <strong style={styles.infoValue}>{value}</strong>
@@ -271,13 +399,16 @@ const styles = {
     minHeight: "100vh",
     background: "#f6f8fb",
     color: "#0f172a",
-    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontFamily:
+      "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
+
   header: {
     background: "#fff",
     borderBottom: "1px solid #e2e8f0",
     padding: "30px 6%",
   },
+
   headerContent: {
     maxWidth: "1200px",
     margin: "0 auto",
@@ -287,9 +418,25 @@ const styles = {
     flexWrap: "wrap",
     gap: "20px",
   },
-  titleRow: { display: "flex", alignItems: "center", gap: "10px" },
-  title: { margin: 0, fontSize: "28px", fontWeight: 700 },
-  subtitle: { margin: "8px 0 0 38px", color: "#64748b", fontSize: "14px" },
+
+  titleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+  },
+
+  title: {
+    margin: 0,
+    fontSize: "28px",
+    fontWeight: 700,
+  },
+
+  subtitle: {
+    margin: "8px 0 0 38px",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
   dashboardButton: {
     textDecoration: "none",
     color: "#2563eb",
@@ -301,7 +448,13 @@ const styles = {
     fontWeight: 600,
     whiteSpace: "nowrap",
   },
-  container: { maxWidth: "1200px", margin: "0 auto", padding: "35px 30px 60px" },
+
+  container: {
+    maxWidth: "1200px",
+    margin: "0 auto",
+    padding: "35px 30px 60px",
+  },
+
   searchSection: {
     display: "flex",
     alignItems: "center",
@@ -310,6 +463,7 @@ const styles = {
     gap: "20px",
     marginBottom: "25px",
   },
+
   searchBox: {
     display: "flex",
     alignItems: "center",
@@ -321,6 +475,7 @@ const styles = {
     flex: "1",
     minWidth: "250px",
   },
+
   searchInput: {
     width: "100%",
     border: "none",
@@ -329,12 +484,19 @@ const styles = {
     fontSize: "14px",
     background: "transparent",
   },
-  driveCount: { color: "#64748b", fontSize: "14px", fontWeight: 600 },
+
+  driveCount: {
+    color: "#64748b",
+    fontSize: "14px",
+    fontWeight: 600,
+  },
+
   driveGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
     gap: "22px",
   },
+
   driveCard: {
     background: "#fff",
     border: "1px solid #e2e8f0",
@@ -342,13 +504,21 @@ const styles = {
     padding: "24px",
     minWidth: 0,
   },
+
   cardHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: "14px",
   },
-  companySection: { display: "flex", alignItems: "center", gap: "12px", minWidth: 0 },
+
+  companySection: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    minWidth: 0,
+  },
+
   companyIcon: {
     width: "48px",
     height: "48px",
@@ -359,8 +529,19 @@ const styles = {
     borderRadius: "10px",
     flexShrink: 0,
   },
-  companyName: { margin: 0, fontSize: "16px", color: "#1e293b" },
-  driveTitle: { margin: "6px 0 0", color: "#64748b", fontSize: "13px" },
+
+  companyName: {
+    margin: 0,
+    fontSize: "16px",
+    color: "#1e293b",
+  },
+
+  driveTitle: {
+    margin: "6px 0 0",
+    color: "#64748b",
+    fontSize: "13px",
+  },
+
   statusBadge: {
     padding: "6px 10px",
     borderRadius: "20px",
@@ -368,24 +549,94 @@ const styles = {
     fontWeight: 600,
     whiteSpace: "nowrap",
   },
+
+  applicationStatusContainer: {
+    flex: "1",
+    minWidth: "140px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "7px",
+    padding: "9px 12px",
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    background: "#fff",
+  },
+
+  applicationStatusLabel: {
+    fontSize: "11px",
+    color: "#64748b",
+    fontWeight: 600,
+  },
+
+  applicationBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "6px",
+    padding: "7px 12px",
+    borderRadius: "20px",
+    fontSize: "12px",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+
   infoGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
     gap: "18px",
     marginTop: "25px",
   },
-  infoItem: { display: "flex", alignItems: "flex-start", gap: "10px" },
-  infoLabel: { display: "block", color: "#64748b", fontSize: "11px", marginBottom: "5px" },
-  infoValue: { display: "block", color: "#334155", fontSize: "13px", overflowWrap: "anywhere" },
+
+  infoItem: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+  },
+
+  infoLabel: {
+    display: "block",
+    color: "#64748b",
+    fontSize: "11px",
+    marginBottom: "5px",
+  },
+
+  infoValue: {
+    display: "block",
+    color: "#334155",
+    fontSize: "13px",
+    overflowWrap: "anywhere",
+  },
+
   eligibilitySection: {
     marginTop: "25px",
     padding: "16px",
     background: "#f8fafc",
     borderRadius: "9px",
   },
-  sectionHeading: { margin: "0 0 8px", fontSize: "13px", color: "#334155" },
-  eligibilityText: { margin: 0, color: "#64748b", fontSize: "13px", lineHeight: 1.6 },
-  actions: { display: "flex", gap: "10px", marginTop: "24px", flexWrap: "wrap" },
+
+  sectionHeading: {
+    margin: "0 0 8px",
+    fontSize: "13px",
+    color: "#334155",
+  },
+
+  eligibilityText: {
+    margin: 0,
+    color: "#64748b",
+    fontSize: "13px",
+    lineHeight: 1.6,
+  },
+
+  actions: {
+    display: "flex",
+    gap: "10px",
+    marginTop: "24px",
+    flexWrap: "wrap",
+    alignItems: "stretch",
+  },
+
   companyButton: {
     display: "inline-flex",
     alignItems: "center",
@@ -400,6 +651,7 @@ const styles = {
     fontSize: "13px",
     fontWeight: 600,
   },
+
   applyButton: {
     display: "inline-flex",
     alignItems: "center",
@@ -414,6 +666,7 @@ const styles = {
     fontSize: "13px",
     fontWeight: 600,
   },
+
   emptyState: {
     background: "#fff",
     border: "1px solid #e2e8f0",
@@ -422,6 +675,7 @@ const styles = {
     textAlign: "center",
     color: "#64748b",
   },
+
   emptyIcon: {
     width: "64px",
     height: "64px",
@@ -432,6 +686,7 @@ const styles = {
     background: "#eff6ff",
     color: "#2563eb",
   },
+
   clearButton: {
     marginTop: "10px",
     padding: "10px 16px",
@@ -441,6 +696,7 @@ const styles = {
     color: "#fff",
     cursor: "pointer",
   },
+
   errorBox: {
     padding: "25px",
     borderRadius: "10px",
