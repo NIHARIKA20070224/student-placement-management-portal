@@ -1,35 +1,25 @@
+require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
 const db = require("./db");
 
 const app = express();
-const PORT = 5000;
+const PORT = Number(process.env.PORT || 5000);
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Import route files
-const testRoutes = require("./routes/testRoutes");
-const authRoutes = require("./routes/authRoutes");
-const studentRoutes = require("./routes/studentRoutes");
-const companyRoutes = require("./routes/companyRoutes");
-const driveRoutes = require("./routes/driveRoutes");
-const officerRoutes = require("./routes/officerRoutes");
-const notificationRoutes = require("./routes/notificationRoutes");
+// Existing project routes
+app.use("/api", require("./routes/testRoutes"));
+app.use("/api/auth", require("./routes/authRoutes"));
+app.use("/api/student", require("./routes/studentRoutes"));
+app.use("/api/companies", require("./routes/companyRoutes"));
+app.use("/api/drives", require("./routes/driveRoutes"));
+app.use("/api/officer", require("./routes/officerRoutes"));
+app.use("/api/notifications", require("./routes/notificationRoutes"));
 
-// Register API routes
-app.use("/api", testRoutes);
-app.use("/api/auth", authRoutes);
-app.use("/api/student", studentRoutes);
-app.use("/api/companies", companyRoutes);
-app.use("/api/drives", driveRoutes);
-app.use("/api/officer", officerRoutes);
-app.use("/api/notifications", notificationRoutes);
-
-// Root endpoint
 app.get("/", (req, res) => {
   res.json({
     success: true,
@@ -37,7 +27,19 @@ app.get("/", (req, res) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`CareerConnect server running on http://localhost:${PORT}`);
-});
+async function startServer() {
+  try {
+    await db.initializeDatabase();
+
+    app.listen(PORT, () => {
+      console.log(
+        `CareerConnect server running on http://localhost:${PORT}`
+      );
+    });
+  } catch (error) {
+    console.error("Database initialization failed:", error.message);
+    process.exit(1);
+  }
+}
+
+startServer();
